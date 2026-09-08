@@ -389,7 +389,7 @@ class _SettingsScreenState extends State<SettingsScreen> {
         ),
       ),
       secondary: Icon(icon, color: AppColors.primary, size: 22),
-      activeColor: AppColors.primary,
+      activeThumbColor: AppColors.primary,
       contentPadding: EdgeInsets.zero,
     );
   }
