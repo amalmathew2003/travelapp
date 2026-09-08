@@ -9,6 +9,7 @@ import 'package:travalapp/model/traval_session.dart';
 import 'package:travalapp/service/location_service.dart';
 import 'package:travalapp/theme/app_theme.dart';
 import 'package:travalapp/utils/constants.dart';
+import 'package:travalapp/widgets/glass_container.dart';
 import '../utils/distance_calculator.dart';
 
 import 'package:confetti/confetti.dart';
@@ -31,6 +32,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
   bool isTracking = false;
   bool isMapReady = false;
   bool isFullScreen = false;
+  bool showMapPreview = false; // Controls lazy map loading when idle
   double totalDistance = 0.0;
   final List<LatLng> routePoints = [];
 
@@ -100,7 +102,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
       if (currentLatLng != null) {
         _mapController.move(currentLatLng!, _mapController.camera.zoom);
       } else {
-        // Try getting it again if null
         try {
           final pos = await Geolocator.getCurrentPosition(
             locationSettings: const LocationSettings(
@@ -179,7 +180,6 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
     });
   }
 
-  // Achievement Check helper ... 
   Future<void> _checkAchievements() async {
     for (final milestone in AppConstants.achievementMilestones) {
       if (totalDistance >= milestone && !unlockedMilestones.contains(milestone)) {
@@ -203,6 +203,7 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
     setState(() {
       isTracking = true;
+      showMapPreview = false;
       totalDistance = 0;
       routePoints.clear();
       startTime = DateTime.now();
@@ -223,7 +224,10 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   Future<void> stopTracking() async {
     _timerUpdater?.cancel();
-    setState(() => isTracking = false);
+    setState(() {
+      isTracking = false;
+      showMapPreview = false;
+    });
 
     FlutterBackgroundService().invoke('stopService');
 
@@ -263,6 +267,8 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
 
   @override
   Widget build(BuildContext context) {
+    final bool isMapActive = isTracking || showMapPreview;
+
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -276,83 +282,11 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
                 isTracking: isTracking,
               ),
             Expanded(
-              child: Stack(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.vertical(top: Radius.circular(isFullScreen ? 0 : 24)),
-                    child: FlutterMap(
-                      mapController: _mapController,
-                      options: MapOptions(
-                        initialCenter: currentLatLng ?? const LatLng(0, 0),
-                        initialZoom: 16,
-                        onMapReady: () => setState(() => isMapReady = true),
-                      ),
-                      children: [
-                        ..._buildTileLayers(),
-                        if (routePoints.length > 1) PolylineLayer(polylines: [Polyline(points: routePoints, strokeWidth: 5, color: AppColors.primary)]),
-                        if (currentLatLng != null) MarkerLayer(markers: [
-                          Marker(
-                            point: currentLatLng!,
-                            width: 40,
-                            height: 40,
-                            child: AnimatedBuilder(
-                              animation: _pulseAnimation,
-                              builder: (_, child) => Transform.scale(scale: isTracking ? _pulseAnimation.value : 1.0, child: child),
-                              child: Container(
-                                decoration: BoxDecoration(shape: BoxShape.circle, color: AppColors.primary, border: const Border.fromBorderSide(BorderSide(color: Colors.white, width: 3))),
-                                child: const Icon(Icons.my_location, color: Colors.white, size: 18),
-                              ),
-                            ),
-                          ),
-                        ]),
-                      ],
-                    ),
-                  ),
-                  Align(alignment: Alignment.topCenter, child: ConfettiWidget(confettiController: _confettiController, blastDirectionality: BlastDirectionality.explosive)),
-                  
-                  // Map Controls (Fullscreen + Center)
-                  Positioned(
-                    top: 16,
-                    right: 16,
-                    child: Column(
-                      children: [
-                        FloatingActionButton.small(
-                          heroTag: 'fullscreen_btn',
-                          backgroundColor: isFullScreen
-                              ? AppColors.surfaceCard.withAlpha((255 * 0.8).round())
-                              : AppColors.surfaceCard,
-                          onPressed: () {
-                            setState(() {
-                              isFullScreen = !isFullScreen;
-                            });
-                            if (widget.onFullScreenToggle != null) {
-                              widget.onFullScreenToggle!(isFullScreen);
-                            }
-                          },
-                          child: Icon(
-                            isFullScreen
-                                ? Icons.fullscreen_exit_rounded
-                                : Icons.fullscreen_rounded,
-                            color: AppColors.textPrimary,
-                          ),
-                        ),
-                        const SizedBox(height: 8),
-                        FloatingActionButton.small(
-                          heroTag: 'center_btn',
-                          backgroundColor: AppColors.surfaceCard,
-                          onPressed: _centerOnLocation,
-                          child: Icon(
-                            Icons.my_location_rounded,
-                            color: AppColors.primary,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
-              ),
+              child: isMapActive
+                  ? _buildMapArea()
+                  : _buildReadyToTrackView(),
             ),
-            if (!isFullScreen)
+            if (!isFullScreen && isTracking)
               BottomPanel(
                 isTracking: isTracking,
                 totalDistance: totalDistance,
@@ -364,6 +298,348 @@ class _MapScreenState extends State<MapScreen> with TickerProviderStateMixin {
           ],
         ),
       ),
+    );
+  }
+
+  // ───── MAP VIEW AREA (Rendered when tracking or map preview is active) ─────
+  Widget _buildMapArea() {
+    return Stack(
+      children: [
+        ClipRRect(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(isFullScreen ? 0 : 24)),
+          child: FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: currentLatLng ?? const LatLng(0, 0),
+              initialZoom: 16,
+              onMapReady: () => setState(() => isMapReady = true),
+            ),
+            children: [
+              ..._buildTileLayers(),
+              if (routePoints.length > 1) PolylineLayer(polylines: [Polyline(points: routePoints, strokeWidth: 5, color: AppColors.primary)]),
+              if (currentLatLng != null) MarkerLayer(markers: [
+                Marker(
+                  point: currentLatLng!,
+                  width: 40,
+                  height: 40,
+                  child: AnimatedBuilder(
+                    animation: _pulseAnimation,
+                    builder: (_, child) => Transform.scale(scale: isTracking ? _pulseAnimation.value : 1.0, child: child),
+                    child: Container(
+                      decoration: BoxDecoration(shape: BoxShape.circle, color: AppColors.primary, border: const Border.fromBorderSide(BorderSide(color: Colors.white, width: 3))),
+                      child: const Icon(Icons.my_location, color: Colors.white, size: 18),
+                    ),
+                  ),
+                ),
+              ]),
+            ],
+          ),
+        ),
+        Align(alignment: Alignment.topCenter, child: ConfettiWidget(confettiController: _confettiController, blastDirectionality: BlastDirectionality.explosive)),
+        
+        // Map Controls (Fullscreen + Center + Hide Preview)
+        Positioned(
+          top: 16,
+          right: 16,
+          child: Column(
+            children: [
+              FloatingActionButton.small(
+                heroTag: 'fullscreen_btn',
+                backgroundColor: isFullScreen
+                    ? AppColors.surfaceCard.withAlpha((255 * 0.8).round())
+                    : AppColors.surfaceCard,
+                onPressed: () {
+                  setState(() {
+                    isFullScreen = !isFullScreen;
+                  });
+                  if (widget.onFullScreenToggle != null) {
+                    widget.onFullScreenToggle!(isFullScreen);
+                  }
+                },
+                child: Icon(
+                  isFullScreen
+                      ? Icons.fullscreen_exit_rounded
+                      : Icons.fullscreen_rounded,
+                  color: AppColors.textPrimary,
+                ),
+              ),
+              const SizedBox(height: 8),
+              FloatingActionButton.small(
+                heroTag: 'center_btn',
+                backgroundColor: AppColors.surfaceCard,
+                onPressed: _centerOnLocation,
+                child: Icon(
+                  Icons.my_location_rounded,
+                  color: AppColors.primary,
+                ),
+              ),
+              if (!isTracking && showMapPreview) ...[
+                const SizedBox(height: 8),
+                FloatingActionButton.small(
+                  heroTag: 'close_preview_btn',
+                  backgroundColor: AppColors.surfaceCard,
+                  onPressed: () => setState(() => showMapPreview = false),
+                  child: Icon(
+                    Icons.close_rounded,
+                    color: AppColors.textMuted,
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+
+        // Start tracking overlay bar if in Map Preview mode
+        if (!isTracking && showMapPreview)
+          Positioned(
+            bottom: 20,
+            left: 20,
+            right: 20,
+            child: GradientGlassCard(
+              padding: const EdgeInsets.all(16),
+              child: Row(
+                children: [
+                  Icon(Icons.map_outlined, color: AppColors.primary, size: 24),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text('Map Preview Mode', style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w700, fontSize: 14)),
+                        Text('Map active. Tap start to trace trip.', style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
+                      ],
+                    ),
+                  ),
+                  ElevatedButton(
+                    onPressed: startTracking,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: AppColors.accentGreen,
+                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                    ),
+                    child: const Text('START', style: TextStyle(fontWeight: FontWeight.w700, color: Colors.white)),
+                  ),
+                ],
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+
+  // ───── IDLE READY-TO-TRACK VIEW (Zero map requests when idle) ─────
+  Widget _buildReadyToTrackView() {
+    String activityLabel;
+    IconData activityIcon;
+    switch (selectedActivity) {
+      case 'run':
+        activityLabel = 'Running Mode';
+        activityIcon = Icons.directions_run;
+        break;
+      case 'cycle':
+        activityLabel = 'Cycling Mode';
+        activityIcon = Icons.pedal_bike;
+        break;
+      case 'drive':
+        activityLabel = 'Driving Mode';
+        activityIcon = Icons.directions_car;
+        break;
+      default:
+        activityLabel = 'Walking Mode';
+        activityIcon = Icons.directions_walk;
+    }
+
+    return Padding(
+      padding: const EdgeInsets.all(20),
+      child: Column(
+        children: [
+          Expanded(
+            child: SingleChildScrollView(
+              child: Column(
+                children: [
+                  const SizedBox(height: 20),
+
+                  // Hero animated radar emblem
+                  AnimatedBuilder(
+                    animation: _pulseAnimation,
+                    builder: (context, child) {
+                      return Container(
+                        width: 130 * _pulseAnimation.value,
+                        height: 130 * _pulseAnimation.value,
+                        decoration: BoxDecoration(
+                          shape: BoxShape.circle,
+                          color: AppColors.primary.withAlpha((255 * 0.1).round()),
+                          border: Border.all(
+                            color: AppColors.primary.withAlpha((255 * 0.3).round()),
+                            width: 2,
+                          ),
+                        ),
+                        child: Center(
+                          child: Container(
+                            width: 80,
+                            height: 80,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
+                              gradient: AppColors.primaryGradient,
+                              boxShadow: [
+                                BoxShadow(
+                                  color: AppColors.primary.withAlpha((255 * 0.4).round()),
+                                  blurRadius: 20,
+                                  offset: const Offset(0, 8),
+                                ),
+                              ],
+                            ),
+                            child: Icon(activityIcon, color: Colors.white, size: 40),
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+
+                  const SizedBox(height: 28),
+
+                  // Status Badge & Title
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
+                    decoration: BoxDecoration(
+                      color: AppColors.accentGreen.withAlpha((255 * 0.15).round()),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: AppColors.accentGreen.withAlpha((255 * 0.3).round())),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Container(
+                          width: 8,
+                          height: 8,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: AppColors.accentGreen,
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Text(
+                          'GPS Signal Ready',
+                          style: TextStyle(
+                            color: AppColors.accentGreen,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+
+                  const SizedBox(height: 12),
+
+                  Text(
+                    activityLabel,
+                    style: TextStyle(
+                      color: AppColors.textPrimary,
+                      fontSize: 26,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: -0.5,
+                    ),
+                  ),
+
+                  const SizedBox(height: 6),
+
+                  Text(
+                    'Press Start to open live map tracking and record your route.',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      color: AppColors.textMuted,
+                      fontSize: 14,
+                    ),
+                  ),
+
+                  const SizedBox(height: 32),
+
+                  // Quick Mode Specs Card
+                  GradientGlassCard(
+                    padding: const EdgeInsets.all(20),
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceAround,
+                      children: [
+                        _specItem(Icons.my_location_rounded, 'High Accuracy', 'GPS Mode'),
+                        Container(width: 1, height: 36, color: Colors.white.withAlpha((255 * 0.1).round())),
+                        _specItem(Icons.energy_savings_leaf_rounded, 'Optimized', 'Battery Saver'),
+                        Container(width: 1, height: 36, color: Colors.white.withAlpha((255 * 0.1).round())),
+                        _specItem(Icons.security_rounded, 'Encrypted', 'Local Save'),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+
+          // Action Buttons
+          Column(
+            children: [
+              SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: ElevatedButton.icon(
+                  onPressed: startTracking,
+                  icon: const Icon(Icons.play_arrow_rounded, size: 28, color: Colors.white),
+                  label: const Text(
+                    'START TRACKING',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w800,
+                      letterSpacing: 1,
+                      color: Colors.white,
+                    ),
+                  ),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: AppColors.accentGreen,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(18),
+                    ),
+                    elevation: 8,
+                    shadowColor: AppColors.accentGreen.withAlpha((255 * 0.4).round()),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 12),
+              SizedBox(
+                width: double.infinity,
+                height: 48,
+                child: OutlinedButton.icon(
+                  onPressed: () => setState(() => showMapPreview = true),
+                  icon: Icon(Icons.map_rounded, size: 20, color: AppColors.textSecondary),
+                  label: Text(
+                    'PREVIEW MAP',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: Colors.white.withAlpha((255 * 0.15).round())),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _specItem(IconData icon, String title, String subtitle) {
+    return Column(
+      children: [
+        Icon(icon, color: AppColors.primary, size: 22),
+        const SizedBox(height: 6),
+        Text(title, style: TextStyle(color: AppColors.textPrimary, fontWeight: FontWeight.w700, fontSize: 13)),
+        Text(subtitle, style: TextStyle(color: AppColors.textMuted, fontSize: 11)),
+      ],
     );
   }
 }
