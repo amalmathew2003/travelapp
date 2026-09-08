@@ -11,6 +11,11 @@
 
 **A real-time fitness & travel tracking app for Walking, Running, Cycling, and Driving — with live GPS maps, calorie estimates, and gamified achievements.**
 
+### 📥 [**Download APK**](https://github.com/amalmathew2003/travelapp/releases/latest)
+
+[![Download](https://img.shields.io/badge/Download-APK-success?style=for-the-badge&logo=android&logoColor=white)](https://github.com/amalmathew2003/travelapp/releases/latest)
+[![Latest Release](https://img.shields.io/github/v/release/amalmathew2003/travelapp?style=for-the-badge&label=Latest&color=blue)](https://github.com/amalmathew2003/travelapp/releases/latest)
+
 ```
   📍 TRACK   ───▶   🗺️ MAP THE ROUTE   ───▶   📊 ANALYZE   ───▶   🏆 UNLOCK BADGES
 ```
@@ -127,6 +132,23 @@ travalapp/
 │       ├── glass_container.dart       🪟 glassmorphic blur cards
 │       └── stat_card.dart             🎴 gradient metric cards
 └── pubspec.yaml
+```
+
+<br>
+
+## 🚀 Run It
+
+### Option 1 — Install the APK directly
+1. Go to [**Releases**](https://github.com/amalmathew2003/travelapp/releases/latest)
+2. Download `app-release.apk`
+3. Install it on your Android device (enable "Install from unknown sources" if prompted)
+
+### Option 2 — Build from source
+```bash
+git clone https://github.com/amalmathew2003/travelapp.git
+cd travelapp
+flutter pub get
+flutter run
 ```
 
 <br>
